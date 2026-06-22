@@ -7,12 +7,14 @@ import base64
 import time
 from datetime import datetime
 
-USERNAME = os.getenv("HACKERONE_USERNAME")
-TOKEN = os.getenv("HACKERONE_TOKEN")
-
-if not USERNAME or not TOKEN:
-    print("Error: HACKERONE_USERNAME and HACKERONE_TOKEN environment variables must be set.")
-    sys.exit(1)
+def _make_auth_header():
+    username = os.getenv("HACKERONE_USERNAME")
+    token = os.getenv("HACKERONE_TOKEN")
+    if not username or not token:
+        print("Error: HACKERONE_USERNAME and HACKERONE_TOKEN environment variables must be set.")
+        sys.exit(1)
+    b64 = base64.b64encode((username + ":" + token).encode('ascii')).decode('ascii')
+    return f'Basic {b64}'
 
 def format_date(date_str):
     if not date_str:
@@ -26,11 +28,6 @@ def format_date(date_str):
     except Exception:
         return date_str
 
-def _make_auth_header():
-    auth_string = f"{USERNAME}:{TOKEN}"
-    b64 = base64.b64encode(auth_string.encode('ascii')).decode('ascii')
-    return f'Basic {b64}'
-
 PAGE_SIZE = 50
 
 def _hacktivity_base_url(query):
@@ -39,11 +36,8 @@ def _hacktivity_base_url(query):
 
 def count_disclosed_reports(handle, severity_filter=None):
     query = f'team:("{handle}") AND disclosed:true'
-    if severity_filter:
-        sev_parts = " OR ".join([f'severity:{s}' for s in severity_filter])
-        query += f' AND ({sev_parts})'
-
     base = _hacktivity_base_url(query)
+    sev_set = {s.lower() for s in severity_filter} if severity_filter else None
     total = 0
     page = 1
     while True:
@@ -53,9 +47,12 @@ def count_disclosed_reports(handle, severity_filter=None):
         try:
             with urllib.request.urlopen(req) as response:
                 data = json.loads(response.read().decode('utf-8'))
-                count = len(data.get('data', []))
-                total += count
-                if count < PAGE_SIZE:
+                batch = data.get('data', [])
+                if sev_set:
+                    batch = [r for r in batch if (r.get('attributes', {}).get('severity_rating') or 'none').lower() in sev_set]
+                total += len(batch)
+                raw_count = len(data.get('data', []))
+                if raw_count < PAGE_SIZE:
                     break
                 page += 1
                 time.sleep(1)
@@ -75,11 +72,8 @@ def build_included_map(data_auth):
 def fetch_disclosed_reports_list(handle, severity_filter=None):
     print(f"Fetching hacktivity list for '{handle}' from REST API...")
     query = f'team:("{handle}") AND disclosed:true'
-    if severity_filter:
-        sev_parts = " OR ".join([f'severity:{s}' for s in severity_filter])
-        query += f' AND ({sev_parts})'
-
     base = _hacktivity_base_url(query)
+    sev_set = {s.lower() for s in severity_filter} if severity_filter else None
     reports = []
     page = 1
 
@@ -93,8 +87,11 @@ def fetch_disclosed_reports_list(handle, severity_filter=None):
             with urllib.request.urlopen(req) as response:
                 data = json.loads(response.read().decode('utf-8'))
                 batch = data.get('data', [])
+                if sev_set:
+                    batch = [r for r in batch if (r.get('attributes', {}).get('severity_rating') or 'none').lower() in sev_set]
                 reports.extend(batch)
-                if len(batch) < PAGE_SIZE:
+                raw_count = len(data.get('data', []))
+                if raw_count < PAGE_SIZE:
                     break
                 page += 1
                 time.sleep(1)
