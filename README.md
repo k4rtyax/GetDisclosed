@@ -1,10 +1,8 @@
 # GetDisclosed
 
-Tools to discover and extract disclosed HackerOne bug bounty reports.
+Fetch and extract disclosed HackerOne bug bounty reports into markdown files.
 
 ## Setup
-
-Set environment variables:
 
 ```bash
 export HACKERONE_USERNAME=your_username
@@ -13,47 +11,51 @@ export HACKERONE_TOKEN=your_api_token
 
 ## Workflow
 
-### 1. Fetch all Bug Bounty Programs
-
-Generate a list of all public HackerOne BBPs sorted by newest:
+**Step 1 — Get list of all Bug Bounty Programs**
 
 ```bash
 python get_newest_programs.py
 ```
 
-Output: `newest_bounty_programs.md` — list of all programs with their handles.
+Outputs `newest_bounty_programs.md` with all public HackerOne BBPs sorted by newest.
 
 ---
 
-### 2. Count disclosed reports per program
-
-Scan the generated list to see how many disclosed reports each program has:
+**Step 2 — Check which programs have disclosed reports**
 
 ```bash
 python main.py --scan newest_bounty_programs.md
 ```
 
-Output: `newest_bounty_programs_disclosed_counts.md` — sorted table by count.
+Scans every program and outputs a sorted count of disclosed reports.
+Outputs `newest_bounty_programs_disclosed_counts.md`.
+
+You can also filter by severity:
+
+```bash
+python main.py --scan newest_bounty_programs.md -H       # High only
+python main.py --scan newest_bounty_programs.md -H -M    # High + Medium
+```
 
 ---
 
-### 3. Fetch full disclosed reports for a program
+**Step 3 — Fetch full reports for a chosen program**
 
 ```bash
 python main.py <handle>
 ```
 
-Filter by severity (flags are combinable):
+Fetches all disclosed reports and saves them to `Reports/<handle>/`:
+- `<handle>_Summary.md` — index table of all reports
+- `<report_id>.md` — full report with vulnerability details and timeline
+
+Filter by severity:
 
 ```bash
-python main.py <handle> -C   # Critical
-python main.py <handle> -H   # High
-python main.py <handle> -M   # Medium
-python main.py <handle> -L   # Low
-python main.py <handle> -N   # None
-python main.py <handle> -H -M
+python main.py <handle> -C    # Critical
+python main.py <handle> -H    # High
+python main.py <handle> -M    # Medium
+python main.py <handle> -L    # Low
+python main.py <handle> -N    # None
+python main.py <handle> -H -M # High + Medium
 ```
-
-Output is saved to `Reports/<handle>/`:
-- `<handle>_Summary.md` — index table of all fetched reports
-- `<report_id>.md` — full report with vulnerability details and timeline

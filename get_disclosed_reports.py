@@ -16,6 +16,46 @@ def _make_auth_header():
     b64 = base64.b64encode((username + ":" + token).encode('ascii')).decode('ascii')
     return f'Basic {b64}'
 
+def fetch_programs(output_file="newest_bounty_programs.md"):
+    print("Fetching programs from HackerOne API...")
+    programs = []
+    url = "https://api.hackerone.com/v1/hackers/programs?page%5Bsize%5D=100"
+    page = 1
+    while url:
+        print(f"  -> Fetching page {page}...")
+        req = urllib.request.Request(url, headers={'Accept': 'application/json'})
+        req.add_header('Authorization', _make_auth_header())
+        try:
+            with urllib.request.urlopen(req) as response:
+                data = json.loads(response.read().decode('utf-8'))
+                programs.extend(data.get('data', []))
+                url = data.get('links', {}).get('next')
+                page += 1
+        except Exception as e:
+            print(f"Error: {e}")
+            break
+
+    bbp = [p for p in programs if p.get('attributes', {}).get('offers_bounties')]
+    bbp.sort(key=lambda p: p.get('attributes', {}).get('started_accepting_at') or '', reverse=True)
+
+    print(f"\nFound {len(bbp)} Bug Bounty Programs out of {len(programs)} total.")
+
+    with open(output_file, 'w', encoding='utf-8') as f:
+        f.write("# Newest Bug Bounty Programs on HackerOne\n\n")
+        f.write(f"*Total BBP found: {len(bbp)}*\n\n")
+        for i, p in enumerate(bbp, 1):
+            attrs = p.get('attributes', {})
+            name = attrs.get('name', 'Unknown')
+            handle = attrs.get('handle', 'Unknown')
+            f.write(f"### {i}. [{name}](https://hackerone.com/{handle})\n")
+            f.write(f"- **Handle:** @{handle}\n")
+            f.write(f"- **Started Accepting At:** {attrs.get('started_accepting_at', 'Unknown')}\n")
+            f.write(f"- **State:** {attrs.get('state', 'Unknown')}\n")
+            f.write("---\n")
+
+    print(f"Saved to: {output_file}")
+    return output_file
+
 def format_date(date_str):
     if not date_str:
         return ""
