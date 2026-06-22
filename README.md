@@ -17,7 +17,7 @@ export HACKERONE_TOKEN=your_api_token
 python get_newest_programs.py
 ```
 
-Outputs `newest_bounty_programs.md` with all public HackerOne BBPs sorted by newest.
+Outputs [`newest_bounty_programs.md`](newest_bounty_programs.md) with all public HackerOne BBPs sorted by newest.
 
 ---
 
