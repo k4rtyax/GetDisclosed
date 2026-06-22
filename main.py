@@ -67,12 +67,14 @@ def cmd_scan(filepath, severity_filter):
 def main():
     parser = argparse.ArgumentParser(
         description="HackerOne disclosed report toolkit.",
-        usage="main.py [--fetch-programs] [--scan FILE] [<handle>] [-C] [-H] [-M] [-L] [-N]"
+        usage="main.py [--fetch-programs] [--scan FILE] [<handle>] [-q QUERY] [-C] [-H] [-M] [-L] [-N]"
     )
     parser.add_argument("handle", nargs='?', help="Program handle to fetch full reports (e.g. Shopify)")
     parser.add_argument("--fetch-programs", metavar="FILE", nargs='?', const="newest_bounty_programs.md",
                         help="Fetch all HackerOne BBPs and save to FILE (default: newest_bounty_programs.md)")
     parser.add_argument("--scan", metavar="FILE", help="Scan program list from FILE and count disclosed reports")
+    parser.add_argument("-q", "--query", metavar="QUERY",
+                        help='Extra HackerOne query (e.g. "ssrf AND substate:(\\\"Resolved\\\")" or standalone without handle)')
     parser.add_argument("-C", "--critical", action="store_true", help="Critical severity")
     parser.add_argument("-H", "--high",     action="store_true", help="High severity")
     parser.add_argument("-M", "--medium",   action="store_true", help="Medium severity")
@@ -93,10 +95,12 @@ def main():
         fetch_programs(args.fetch_programs)
     elif args.scan:
         cmd_scan(args.scan, severity_filter)
-    elif args.handle:
+    elif args.handle or args.query:
         sev_label = ', '.join(s.capitalize() for s in severity_filter) if severity_filter else "All"
         print(f"Severity filter: {sev_label}")
-        run(args.handle, severity_filter)
+        if args.query:
+            print(f"Extra query: {args.query}")
+        run(args.handle, severity_filter, extra_query=args.query)
     else:
         parser.print_help()
         sys.exit(1)

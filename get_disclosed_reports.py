@@ -1,4 +1,5 @@
 import os
+import re
 import sys
 import json
 import urllib.request
@@ -109,9 +110,16 @@ def build_included_map(data_auth):
     included = data_auth.get("included", [])
     return {(item["type"], item["id"]): item for item in included}
 
-def fetch_disclosed_reports_list(handle, severity_filter=None):
-    print(f"Fetching hacktivity list for '{handle}' from REST API...")
-    query = f'team:("{handle}") AND disclosed:true'
+def fetch_disclosed_reports_list(handle=None, severity_filter=None, extra_query=None):
+    if handle:
+        query = f'team:("{handle}") AND disclosed:true'
+        if extra_query:
+            query += f' AND {extra_query}'
+        label = handle
+    else:
+        query = extra_query or 'disclosed:true'
+        label = "hacktivity"
+    print(f"Fetching hacktivity list (query: {query!r})...")
     base = _hacktivity_base_url(query)
     sev_set = {s.lower() for s in severity_filter} if severity_filter else None
     reports = []
@@ -143,7 +151,7 @@ def fetch_disclosed_reports_list(handle, severity_filter=None):
             print(f"Error fetching data: {e}")
             break
 
-    return reports
+    return reports, label
 
 def fetch_full_report_json_authenticated(report_id):
     try:
@@ -266,20 +274,22 @@ def write_full_report(report_id, out_path, hacktivity_item):
                     out_f.write(f"{formatted_message}\n")
                 out_f.write("\n")
 
-def run(handle, severity_filter=None):
-    reports = fetch_disclosed_reports_list(handle, severity_filter)
+def run(handle=None, severity_filter=None, extra_query=None):
+    reports, label = fetch_disclosed_reports_list(handle, severity_filter, extra_query)
 
     if not reports:
-        print(f"No disclosed reports found for '{handle}'. Make sure you matched the exact case.")
+        target = handle or extra_query or "query"
+        print(f"No disclosed reports found for '{target}'.")
         return
 
-    out_dir = os.path.join("Reports", handle)
+    safe_label = re.sub(r'[^\w\-]', '_', label)[:60]
+    out_dir = os.path.join("Reports", safe_label)
     os.makedirs(out_dir, exist_ok=True)
 
-    summary_file = os.path.join(out_dir, f"{handle}_Summary.md")
+    summary_file = os.path.join(out_dir, f"{safe_label}_Summary.md")
 
     with open(summary_file, 'w', encoding='utf-8') as f:
-        f.write(f"# 📊 Disclosed Reports Summary for: {handle}\n\n")
+        f.write(f"# 📊 Disclosed Reports Summary for: {label}\n\n")
         f.write(f"> **Total Reports Found:** {len(reports)}\n\n")
 
         f.write("## 📑 Quick Overview\n\n")
