@@ -59,3 +59,17 @@ python main.py <handle> -L    # Low
 python main.py <handle> -N    # None
 python main.py <handle> -H -M # High + Medium
 ```
+
+Filter by keyword/query (HackerOne query syntax):
+
+```bash
+python main.py <handle> -q 'ssrf'                          # SSRF reports from a program
+python main.py <handle> -q 'ssrf' -C -H                    # SSRF + Critical/High only
+```
+
+Or search across all programs without specifying a handle:
+
+```bash
+python main.py -q 'ssrf AND disclosed:true'
+python main.py -q 'ssrf AND substate:("Resolved") AND disclosed:true'
+```
