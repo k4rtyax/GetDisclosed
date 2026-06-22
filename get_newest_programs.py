@@ -1,8 +1,8 @@
 import json
+import sys
 import urllib.request
 import base64
 from datetime import datetime
-
 import os
 
 USERNAME = os.getenv("HACKERONE_USERNAME")
