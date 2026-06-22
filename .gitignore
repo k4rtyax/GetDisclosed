@@ -1,0 +1,5 @@
+Reports/
+__pycache__/
+*.pyc
+temp.json
+debug_api.py
