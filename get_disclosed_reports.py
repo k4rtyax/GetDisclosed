@@ -76,7 +76,7 @@ def _hacktivity_base_url(query):
     return f"https://api.hackerone.com/v1/hackers/hacktivity?queryString={encoded}&page[size]={PAGE_SIZE}"
 
 def count_disclosed_reports(handle, severity_filter=None):
-    query = f'team:("{handle}") AND disclosed:true'
+    query = f'team:("{handle}") AND disclosed:true AND substate:("Resolved") AND disclosed_at:>2025-12-31'
     base = _hacktivity_base_url(query)
     sev_set = {s.lower() for s in severity_filter} if severity_filter else None
     total = 0
@@ -110,14 +110,14 @@ def build_included_map(data_auth):
     included = data_auth.get("included", [])
     return {(item["type"], item["id"]): item for item in included}
 
-def fetch_disclosed_reports_list(handle=None, severity_filter=None, extra_query=None):
+def fetch_disclosed_reports_list(handle=None, severity_filter=None, extra_query=None, limit=None):
     if handle:
-        query = f'team:("{handle}") AND disclosed:true'
+        query = f'team:("{handle}") AND disclosed:true AND substate:("Resolved") AND disclosed_at:>2025-12-31'
         if extra_query:
             query += f' AND {extra_query}'
         label = handle
     else:
-        query = extra_query or 'disclosed:true'
+        query = extra_query or 'disclosed:true AND substate:("Resolved") AND disclosed_at:>2025-12-31'
         label = "hacktivity"
     print(f"Fetching hacktivity list (query: {query!r})...")
     base = _hacktivity_base_url(query)
@@ -137,7 +137,13 @@ def fetch_disclosed_reports_list(handle=None, severity_filter=None, extra_query=
                 batch = data.get('data', [])
                 if sev_set:
                     batch = [r for r in batch if (r.get('attributes', {}).get('severity_rating') or 'none').lower() in sev_set]
+                # Filter out useless substates — keep Resolved & Informative, drop N/A, Duplicate, Spam
+                _EXCLUDED = {'not-applicable', 'duplicate', 'spam'}
+                batch = [r for r in batch if (r.get('attributes', {}).get('substate') or '').lower().replace(' ', '-') not in _EXCLUDED]
                 reports.extend(batch)
+                if limit and len(reports) >= limit:
+                    reports = reports[:limit]
+                    break
                 raw_count = len(data.get('data', []))
                 if raw_count < PAGE_SIZE:
                     break
@@ -172,9 +178,38 @@ def fetch_public_info(report_id):
     except Exception:
         return None
 
+def _extract_program_handle(data_auth, hacktivity_item=None):
+    # 1) Best source: hacktivity_item.relationships.program.data.attributes.handle
+    #    This is always present per the HackerOne Hacker API docs (hacktivity_item object)
+    if hacktivity_item:
+        handle = (hacktivity_item.get("relationships", {})
+                                 .get("program", {})
+                                 .get("data", {})
+                                 .get("attributes", {})
+                                 .get("handle"))
+        if handle:
+            return handle
+
+    # 2) Try authenticated report response: relationships.program.data.attributes.handle
+    report_data = data_auth.get("data", {}) if data_auth else {}
+    prog_data = report_data.get("relationships", {}).get("program", {}).get("data", {})
+    handle = prog_data.get("attributes", {}).get("handle")
+    if handle:
+        return handle
+
+    # 3) Try included list
+    for item in (data_auth or {}).get("included", []):
+        if item.get("type") == "program":
+            handle = item.get("attributes", {}).get("handle")
+            if handle:
+                return handle
+
+    # 4) Last resort: numeric id
+    return str(prog_data.get("id")) if prog_data.get("id") else "unknown"
+
 def write_full_report(report_id, out_path, hacktivity_item):
     data_auth = fetch_full_report_json_authenticated(report_id)
-    
+
     if not data_auth or "data" not in data_auth:
         with open(out_path, 'w', encoding='utf-8') as f:
             f.write(f"# Report {report_id}\n\n")
@@ -182,8 +217,9 @@ def write_full_report(report_id, out_path, hacktivity_item):
             attr = hacktivity_item.get('attributes', {})
             f.write(f"- **Title:** {attr.get('title')}\n")
             f.write(f"- **URL:** https://hackerone.com/reports/{report_id}\n")
-        return
+        return None
 
+    program_handle = _extract_program_handle(data_auth, hacktivity_item)
     report_data = data_auth["data"]
     attributes = report_data.get("attributes", {})
     relationships = report_data.get("relationships", {})
@@ -274,56 +310,147 @@ def write_full_report(report_id, out_path, hacktivity_item):
                     out_f.write(f"{formatted_message}\n")
                 out_f.write("\n")
 
-def run(handle=None, severity_filter=None, extra_query=None):
-    reports, label = fetch_disclosed_reports_list(handle, severity_filter, extra_query)
+    return program_handle
+
+def _bug_type_from_query(query):
+    if not query:
+        return None
+    first = re.split(r'\s+(?:AND|OR)\s+', query, maxsplit=1)[0]
+    return re.sub(r'[^\w]', '_', first.strip().lower()) or None
+
+def _write_report_to_dir(out_dir, report_id, item, summary_f):
+    attr = item.get('attributes', {})
+    rels = item.get('relationships', {})
+
+    title = attr.get('title') or "Limited Disclosure"
+    title = title.replace("|", "-").replace("\n", " ").strip()
+    severity = attr.get('severity_rating') or "None"
+    bounty = attr.get('total_awarded_amount')
+    bounty_str = f"${bounty}" if bounty else "-"
+    reporter = rels.get('reporter', {}).get('data', {}).get('attributes', {}).get('username') or "Unknown"
+
+    os.makedirs(out_dir, exist_ok=True)
+    report_path = os.path.join(out_dir, f"{report_id}.md")
+    if os.path.exists(report_path):
+        print(f" [=] Skipped (exists): {report_id}.md")
+    else:
+        write_full_report(report_id, report_path, item)
+    summary_f.write(f"| **{report_id}** | {severity} | {title} | {bounty_str} | `@{reporter}` | [Full Report]({report_id}.md) |\n")
+    print(f" [+] Extracted: {report_id}.md ({out_dir})")
+
+def run(handle=None, severity_filter=None, extra_query=None, limit=None):
+    reports, label = fetch_disclosed_reports_list(handle, severity_filter, extra_query, limit)
 
     if not reports:
         target = handle or extra_query or "query"
         print(f"No disclosed reports found for '{target}'.")
         return
 
-    safe_label = re.sub(r'[^\w\-]', '_', label)[:60]
-    out_dir = os.path.join("Reports", safe_label)
-    os.makedirs(out_dir, exist_ok=True)
+    bug_type = _bug_type_from_query(extra_query)
+    group_by_program = handle is None
 
-    summary_file = os.path.join(out_dir, f"{safe_label}_Summary.md")
+    print(f"\nProcessing {len(reports)} reports...")
 
-    with open(summary_file, 'w', encoding='utf-8') as f:
-        f.write(f"# 📊 Disclosed Reports Summary for: {label}\n\n")
-        f.write(f"> **Total Reports Found:** {len(reports)}\n\n")
+    if group_by_program:
+        # Route each report to Reports/<program_handle>/<bug_type>/
+        # summary_rows: { (out_dir, summary_file, program_handle, sub) -> [row_str, ...] }
+        summary_rows = {}
 
-        f.write("## 📑 Quick Overview\n\n")
-        f.write("| Report ID | Severity | Title | Bounty | Reporter | Link |\n")
-        f.write("| :---: | :---: | :--- | :---: | :---: | :---: |\n")
-
-        print(f"\nProcessing {len(reports)} reports. Extracting full details into '{out_dir}/'...")
+        tmp_dir = os.path.join("Reports", "_tmp")
+        os.makedirs(tmp_dir, exist_ok=True)
 
         for item in reports:
             attr = item.get('attributes', {})
-            rels = item.get('relationships', {})
+            rels  = item.get('relationships', {})
+            url   = attr.get('url')
+            report_id = url.split('/')[-1] if url and "hackerone.com/reports/" in url else None
+            if not report_id:
+                continue
 
-            title = attr.get('title') or "Limited Disclosure"
-            title = title.replace("|", "-").replace("\n", " ").strip()
-            severity = attr.get('severity_rating') or "None"
-            url = attr.get('url')
-            bounty = attr.get('total_awarded_amount')
-            bounty_str = f"${bounty}" if bounty else "-"
+            # Peek handle from hacktivity item first (no API call needed)
+            program_handle = (item.get("relationships", {})
+                                  .get("program", {})
+                                  .get("data", {})
+                                  .get("attributes", {})
+                                  .get("handle")) or "unknown"
 
-            reporter = rels.get('reporter', {}).get('data', {}).get('attributes', {}).get('username') or "Unknown"
+            sub      = bug_type or "disclosed"
+            out_dir  = os.path.join("Reports", program_handle, sub)
+            os.makedirs(out_dir, exist_ok=True)
+            final_path = os.path.join(out_dir, f"{report_id}.md")
 
-            report_id = None
-            if url and "hackerone.com/reports/" in url:
-                report_id = url.split('/')[-1]
-
-            if report_id:
-                f.write(f"| **{report_id}** | {severity} | {title} | {bounty_str} | `@{reporter}` | [Full Report]({report_id}.md) |\n")
-
-                report_path = os.path.join(out_dir, f"{report_id}.md")
-                write_full_report(report_id, report_path, item)
-                print(f" [+] Extracted: {report_id}.md")
-                time.sleep(0.5)
+            # Skip if already exists — avoid redundant API calls and overwrites
+            if os.path.exists(final_path):
+                print(f" [=] Skipped (exists): {program_handle}/{sub}/{report_id}.md")
             else:
-                f.write(f"| - | {severity} | {title} | {bounty_str} | `@{reporter}` | - |\n")
+                tmp_path = os.path.join(tmp_dir, f"{report_id}.md")
+                write_full_report(report_id, tmp_path, item)
+                os.replace(tmp_path, final_path)
 
-    print(f"\nSuccess! All reports have been cleanly extracted into '{out_dir}/'")
-    print(f"A master index has been created at: {summary_file}")
+            # Build summary row for this report
+            title      = (attr.get('title') or "Limited Disclosure").replace("|", "-").replace("\n", " ").strip()
+            severity   = (attr.get('severity_rating') or "None").capitalize()
+            bounty     = attr.get('total_awarded_amount')
+            bounty_str = f"${bounty}" if bounty else "-"
+            reporter   = (rels.get('reporter', {}).get('data', {})
+                              .get('attributes', {}).get('username') or "Unknown")
+            row = f"| **{report_id}** | {severity} | {title} | {bounty_str} | `@{reporter}` | [Full Report]({report_id}.md) |\n"
+
+            key = (out_dir, os.path.join(out_dir, f"{program_handle}_{sub}_Summary.md"), program_handle, sub)
+            summary_rows.setdefault(key, []).append(row)
+
+            print(f" [+] {program_handle}/{sub}/{report_id}.md")
+            time.sleep(0.5)
+
+        # Clean up tmp dir if empty
+        try:
+            os.rmdir(tmp_dir)
+        except OSError:
+            pass
+
+        # Write one summary file per program/bug-type directory
+        for (out_dir, summary_file, program_handle, sub), rows in summary_rows.items():
+            with open(summary_file, 'w', encoding='utf-8') as sf:
+                sf.write(f"# Disclosed Reports — {program_handle} / {sub}\n\n")
+                sf.write(f"> **Total Reports:** {len(rows)}\n\n")
+                sf.write("## Quick Overview\n\n")
+                sf.write("| Report ID | Severity | Title | Bounty | Reporter | Link |\n")
+                sf.write("| :---: | :---: | :--- | :---: | :---: | :---: |\n")
+                for row in rows:
+                    sf.write(row)
+            print(f" [+] Summary -> {summary_file}")
+
+        print(f"\nSuccess! Reports grouped by program under Reports/<handle>/{bug_type or 'disclosed'}/")
+    else:
+        # Single program mode — original behaviour but with optional bug_type subfolder
+        if bug_type:
+            out_dir = os.path.join("Reports", handle, bug_type)
+        else:
+            out_dir = os.path.join("Reports", handle)
+        os.makedirs(out_dir, exist_ok=True)
+        summary_file = os.path.join(out_dir, f"{handle}_Summary.md")
+
+        with open(summary_file, 'w', encoding='utf-8') as f:
+            f.write(f"# 📊 Disclosed Reports Summary for: {handle}\n\n")
+            f.write(f"> **Total Reports Found:** {len(reports)}\n\n")
+            f.write("## 📑 Quick Overview\n\n")
+            f.write("| Report ID | Severity | Title | Bounty | Reporter | Link |\n")
+            f.write("| :---: | :---: | :--- | :---: | :---: | :---: |\n")
+
+            for item in reports:
+                attr = item.get('attributes', {})
+                url = attr.get('url')
+                report_id = url.split('/')[-1] if url and "hackerone.com/reports/" in url else None
+                if report_id:
+                    _write_report_to_dir(out_dir, report_id, item, f)
+                    time.sleep(0.5)
+                else:
+                    rels = item.get('relationships', {})
+                    title = (attr.get('title') or "Limited Disclosure").replace("|", "-").strip()
+                    severity = attr.get('severity_rating') or "None"
+                    bounty_str = f"${attr.get('total_awarded_amount')}" if attr.get('total_awarded_amount') else "-"
+                    reporter = rels.get('reporter', {}).get('data', {}).get('attributes', {}).get('username') or "Unknown"
+                    f.write(f"| - | {severity} | {title} | {bounty_str} | `@{reporter}` | - |\n")
+
+        print(f"\nSuccess! Reports saved to '{out_dir}/'")
+        print(f"Summary: {summary_file}")

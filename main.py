@@ -75,6 +75,8 @@ def main():
     parser.add_argument("--scan", metavar="FILE", help="Scan program list from FILE and count disclosed reports")
     parser.add_argument("-q", "--query", metavar="QUERY",
                         help='Extra HackerOne query (e.g. "ssrf AND substate:(\\\"Resolved\\\")" or standalone without handle)')
+    parser.add_argument("-n", "--limit", metavar="N", type=int,
+                        help="Max number of reports to fetch (e.g. -n 20)")
     parser.add_argument("-C", "--critical", action="store_true", help="Critical severity")
     parser.add_argument("-H", "--high",     action="store_true", help="High severity")
     parser.add_argument("-M", "--medium",   action="store_true", help="Medium severity")
@@ -100,7 +102,9 @@ def main():
         print(f"Severity filter: {sev_label}")
         if args.query:
             print(f"Extra query: {args.query}")
-        run(args.handle, severity_filter, extra_query=args.query)
+        if args.limit:
+            print(f"Limit: {args.limit} reports")
+        run(args.handle, severity_filter, extra_query=args.query, limit=args.limit)
     else:
         parser.print_help()
         sys.exit(1)
