@@ -14,7 +14,7 @@ export HACKERONE_TOKEN=your_api_token
 **Step 1 — Get list of all Bug Bounty Programs**
 
 ```bash
-python get_newest_programs.py
+python main.py --fetch-programs
 ```
 
 Outputs [`newest_bounty_programs.md`](newest_bounty_programs.md) with all public HackerOne BBPs sorted by newest.
@@ -72,4 +72,11 @@ Or search across all programs without specifying a handle:
 ```bash
 python main.py -q 'ssrf AND disclosed:true'
 python main.py -q 'ssrf AND substate:("Resolved") AND disclosed:true'
+```
+
+Limit the number of reports fetched with `-n`/`--limit`:
+
+```bash
+python main.py <handle> -n 20                              # First 20 reports only
+python main.py -q 'ssrf AND disclosed:true' -n 50          # Cap a query search at 50
 ```
