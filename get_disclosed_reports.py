@@ -11,8 +11,16 @@ from datetime import datetime
 def _make_auth_header():
     username = os.getenv("HACKERONE_USERNAME")
     token = os.getenv("HACKERONE_TOKEN")
+    # Fallback to a local, gitignored creds.json so the token never lands in the repo.
     if not username or not token:
-        print("Error: HACKERONE_USERNAME and HACKERONE_TOKEN environment variables must be set.")
+        creds_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "creds.json")
+        if os.path.exists(creds_path):
+            with open(creds_path, encoding="utf-8") as f:
+                creds = json.load(f)
+            username = username or creds.get("username")
+            token = token or creds.get("token")
+    if not username or not token:
+        print("Error: set HACKERONE_USERNAME and HACKERONE_TOKEN env vars, or create creds.json.")
         sys.exit(1)
     b64 = base64.b64encode((username + ":" + token).encode('ascii')).decode('ascii')
     return f'Basic {b64}'
@@ -75,8 +83,12 @@ def _hacktivity_base_url(query):
     encoded = urllib.parse.quote(query)
     return f"https://api.hackerone.com/v1/hackers/hacktivity?queryString={encoded}&page[size]={PAGE_SIZE}"
 
-def count_disclosed_reports(handle, severity_filter=None):
-    query = f'team:("{handle}") AND disclosed:true AND substate:("Resolved") AND disclosed_at:>2025-12-31'
+def _date_clause(since):
+    # since is a date string like '2025-12-31'; returns '' when no filter requested
+    return f' AND disclosed_at:>{since}' if since else ''
+
+def count_disclosed_reports(handle, severity_filter=None, since=None):
+    query = f'team:("{handle}") AND disclosed:true AND substate:("Resolved"){_date_clause(since)}'
     base = _hacktivity_base_url(query)
     sev_set = {s.lower() for s in severity_filter} if severity_filter else None
     total = 0
@@ -110,14 +122,14 @@ def build_included_map(data_auth):
     included = data_auth.get("included", [])
     return {(item["type"], item["id"]): item for item in included}
 
-def fetch_disclosed_reports_list(handle=None, severity_filter=None, extra_query=None, limit=None):
+def fetch_disclosed_reports_list(handle=None, severity_filter=None, extra_query=None, limit=None, since=None):
     if handle:
-        query = f'team:("{handle}") AND disclosed:true AND substate:("Resolved") AND disclosed_at:>2025-12-31'
+        query = f'team:("{handle}") AND disclosed:true AND substate:("Resolved"){_date_clause(since)}'
         if extra_query:
             query += f' AND {extra_query}'
         label = handle
     else:
-        query = extra_query or 'disclosed:true AND substate:("Resolved") AND disclosed_at:>2025-12-31'
+        query = extra_query or f'disclosed:true AND substate:("Resolved"){_date_clause(since)}'
         label = "hacktivity"
     print(f"Fetching hacktivity list (query: {query!r})...")
     base = _hacktivity_base_url(query)
@@ -338,8 +350,8 @@ def _write_report_to_dir(out_dir, report_id, item, summary_f):
     summary_f.write(f"| **{report_id}** | {severity} | {title} | {bounty_str} | `@{reporter}` | [Full Report]({report_id}.md) |\n")
     print(f" [+] Extracted: {report_id}.md ({out_dir})")
 
-def run(handle=None, severity_filter=None, extra_query=None, limit=None):
-    reports, label = fetch_disclosed_reports_list(handle, severity_filter, extra_query, limit)
+def run(handle=None, severity_filter=None, extra_query=None, limit=None, since=None):
+    reports, label = fetch_disclosed_reports_list(handle, severity_filter, extra_query, limit, since)
 
     if not reports:
         target = handle or extra_query or "query"

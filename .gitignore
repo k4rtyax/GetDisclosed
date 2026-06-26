@@ -3,3 +3,4 @@ __pycache__/
 *.pyc
 temp.json
 debug_api.py
+creds.json

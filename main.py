@@ -21,7 +21,7 @@ def parse_programs_from_md(filepath):
     return programs
 
 
-def cmd_scan(filepath, severity_filter):
+def cmd_scan(filepath, severity_filter, since=None):
     programs = parse_programs_from_md(filepath)
     if not programs:
         print(f"No programs found in '{filepath}'.")
@@ -32,9 +32,9 @@ def cmd_scan(filepath, severity_filter):
     results = []
     for i, (name, handle) in enumerate(programs, 1):
         print(f"[{i}/{len(programs)}] {name} ...", end=' ', flush=True)
-        count = count_disclosed_reports(name, severity_filter)
+        count = count_disclosed_reports(name, severity_filter, since)
         if count == 0 and name.lower() != handle.lower():
-            count = count_disclosed_reports(handle, severity_filter)
+            count = count_disclosed_reports(handle, severity_filter, since)
         print(count)
         results.append((name, handle, count))
         time.sleep(0.5)
@@ -77,6 +77,8 @@ def main():
                         help='Extra HackerOne query (e.g. "ssrf AND substate:(\\\"Resolved\\\")" or standalone without handle)')
     parser.add_argument("-n", "--limit", metavar="N", type=int,
                         help="Max number of reports to fetch (e.g. -n 20)")
+    parser.add_argument("-s", "--since", metavar="DATE",
+                        help="Only reports disclosed after DATE, e.g. 2025-12-31 (default: no date filter)")
     parser.add_argument("-C", "--critical", action="store_true", help="Critical severity")
     parser.add_argument("-H", "--high",     action="store_true", help="High severity")
     parser.add_argument("-M", "--medium",   action="store_true", help="Medium severity")
@@ -96,7 +98,7 @@ def main():
     if args.fetch_programs:
         fetch_programs(args.fetch_programs)
     elif args.scan:
-        cmd_scan(args.scan, severity_filter)
+        cmd_scan(args.scan, severity_filter, since=args.since)
     elif args.handle or args.query:
         sev_label = ', '.join(s.capitalize() for s in severity_filter) if severity_filter else "All"
         print(f"Severity filter: {sev_label}")
@@ -104,7 +106,9 @@ def main():
             print(f"Extra query: {args.query}")
         if args.limit:
             print(f"Limit: {args.limit} reports")
-        run(args.handle, severity_filter, extra_query=args.query, limit=args.limit)
+        if args.since:
+            print(f"Since: {args.since}")
+        run(args.handle, severity_filter, extra_query=args.query, limit=args.limit, since=args.since)
     else:
         parser.print_help()
         sys.exit(1)

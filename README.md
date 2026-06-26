@@ -4,9 +4,20 @@ Fetch and extract disclosed HackerOne bug bounty reports into markdown files.
 
 ## Setup
 
+Provide credentials via environment variables:
+
 ```bash
 export HACKERONE_USERNAME=your_username
 export HACKERONE_TOKEN=your_api_token
+```
+
+…or create a local `creds.json` (gitignored) in the project root:
+
+```json
+{
+  "username": "your_username",
+  "token": "your_api_token"
+}
 ```
 
 ## Workflow
@@ -79,4 +90,11 @@ Limit the number of reports fetched with `-n`/`--limit`:
 ```bash
 python main.py <handle> -n 20                              # First 20 reports only
 python main.py -q 'ssrf AND disclosed:true' -n 50          # Cap a query search at 50
+```
+
+Restrict to recently disclosed reports with `-s`/`--since` (no date filter by default):
+
+```bash
+python main.py <handle> --since 2025-12-31                 # Only reports disclosed after this date
+python main.py --scan newest_bounty_programs.md -s 2025-12-31
 ```
